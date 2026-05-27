@@ -9,8 +9,20 @@ endif()
 project("NxCache" VERSION 1.0 LANGUAGES CXX)
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
-add_executable(NxCache "NxCache.cpp" "NxCache.h")
+add_executable(NxCache NxCache.cpp NxCache.h main.cpp)
 set_property(TARGET NxCache PROPERTY CXX_STANDARD 20)
+target_compile_definitions(NxCache PRIVATE SVCNAME="NxCache" SVCDISPLAYNAME="NxCache Service")
+
+if(WIN32)
+  target_sources(NxCache PRIVATE winsvc.cpp winsvc.hpp)
+  target_compile_definitions(NxCache PRIVATE _WIN32_WINNT=0x0A00)
+else()
+  find_package(boost_asio_core CONFIG REQUIRED)
+  target_link_libraries(NxCache PRIVATE Boost::asio_core)
+endif()
+
+find_package(boost_program_options CONFIG REQUIRED)
+target_link_libraries(NxCache PRIVATE Boost::program_options)
 
 find_package(cpprestsdk CONFIG REQUIRED)
 if(WIN32)

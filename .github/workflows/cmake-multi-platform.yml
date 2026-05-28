@@ -1,4 +1,7 @@
 name: NxCache
+permissions:
+   contents: read
+   actions: write
 on:
   push:
     branches: [ "master" ]
@@ -7,7 +10,7 @@ on:
 
 jobs:
   build:
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}-latest
     strategy:
       fail-fast: false
       # Set up a matrix to run the following 3 configurations:
@@ -15,7 +18,7 @@ jobs:
       # 2. <Windows, Release, latest MSVC compiler toolchain on the default runner image, default generator>
       # 3. <MacOS, Release, latest Clang compiler toolchain on the default runner image, default generator>
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: [ubuntu, windows, macos]
 
     env:
       VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg_cache
@@ -29,12 +32,11 @@ jobs:
       run: mkdir -p ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
 
     - name: Restore cache
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       with:
         path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
         key: ${{ matrix.os }}-${{ hashFiles('vcpkg.json') }}-${{ hashFiles('vcpkg-configuration.json') }}
-        restore-keys: |
-          ${{ matrix.os }}-
+        restore-keys: ${{ matrix.os }}-
 
     - name: Set up vcpkg root
       shell: bash
@@ -50,3 +52,25 @@ jobs:
 
     - name: Build
       run: cmake --build ${{ github.workspace }}/build --config Release
+
+    - name: Package
+      if: matrix.os == 'ubuntu'
+      working-directory: ${{ github.workspace }}/build
+      run: cpack -G DEB
+
+    - name: Install
+      working-directory: ${{ github.workspace }}/build
+      run: cmake --install . --config Release --prefix ${{ github.workspace }}/out
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: nxcache-${{ matrix.os }}
+        path: ${{ github.workspace }}/out/
+
+    - name: Upload package
+      if: matrix.os == 'ubuntu'
+      uses: actions/upload-artifact@v4
+      with:
+        name: nxcache-deb
+        path: ${{ github.workspace }}/build/*.deb

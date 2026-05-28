@@ -32,3 +32,9 @@ else()
 endif()
 
 install(TARGETS NxCache RUNTIME DESTINATION bin)
+
+if(UNIX AND NOT APPLE)
+    set(CPACK_GENERATOR "DEB")
+    set(CPACK_DEBIAN_PACKAGE_MAINTAINER "Resco")
+    include(CPack)
+endif()

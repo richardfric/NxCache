@@ -151,7 +151,9 @@ int main_internal(int argc, char** argv, bool run_as_daemon = false)
     try {
         std::filesystem::path cache_dir;
 #if defined(_MSC_VER)
-        SHGetFolderPath(NULL, CSIDL_LOCAL_APPDATA, NULL, SHGFP_TYPE_CURRENT, szPath);
+        if (FAILED(SHGetFolderPath(NULL, run_as_daemon ? CSIDL_COMMON_APPDATA : CSIDL_LOCAL_APPDATA, NULL, SHGFP_TYPE_CURRENT, szPath))) {
+            return EXIT_FAILURE;
+        }
         cache_dir = szPath;
         cache_dir /= SVCNAME;
 #else
@@ -176,8 +178,7 @@ int main_internal(int argc, char** argv, bool run_as_daemon = false)
                 ("help,h", "Print this help message and exit");
 
             try {
-                bpo::parsed_options optparsed = bpo::command_line_parser(argc, argv).options(app_options).run();
-                bpo::store(optparsed, options);
+                bpo::store(bpo::command_line_parser(argc, argv).options(app_options).run(), options);
             }
             catch (const boost::program_options::error& e) {
                 std::cerr << "Error parsing command line: " << e.what() << std::endl;
@@ -222,19 +223,25 @@ int main_internal(int argc, char** argv, bool run_as_daemon = false)
 
             std::filesystem::path config_file = "/etc/" SVCNAME;
 #endif
-            if (std::filesystem::exists(config_file)) {
-                try {
+            try {
+#if defined(_MSC_VER)
+                if (argc > 1) {
+                    bpo::store(bpo::command_line_parser(argc, argv).options(app_options).run(), options);
+                }
+                else
+#endif
+                if (std::filesystem::exists(config_file)) {
                     std::ifstream cfg_stream(config_file);
                     bpo::store(bpo::parse_config_file<char>(cfg_stream, app_options, true), options);
                 }
-                catch (const std::exception& e) {
-                    std::cerr << e.what() << std::endl;
-                    return EXIT_FAILURE;
-                }
-                catch (...) {
-                    std::cerr << "Unknown exception caught" << std::endl;
-                    return EXIT_FAILURE;
-                }
+            }
+            catch (const std::exception& e) {
+                std::cerr << e.what() << std::endl;
+                return EXIT_FAILURE;
+            }
+            catch (...) {
+                std::cerr << "Unknown exception caught" << std::endl;
+                return EXIT_FAILURE;
             }
         }
 
@@ -291,7 +298,7 @@ int main_internal(int argc, char** argv, bool run_as_daemon = false)
 char cRegisterServiceCtrlHandlerEx[] = "cRegisterServiceCtrlHandlerEx";
 char cStartServiceCtrlDispatcher[] = "StartServiceCtrlDispatcher";
 
-void service_main(int argc, char** argv)
+void WINAPI ServiceMain(DWORD argc, LPTSTR* argv)
 {
    bool is_win_service = IsRunningAsSystemService();
    if (is_win_service) {
@@ -309,14 +316,14 @@ void service_main(int argc, char** argv)
       ReportSvcStatus(SERVICE_START_PENDING, NO_ERROR, 3000);
    }
 
-   int exit_code = main_internal(argc, argv, is_win_service);
+   int exit_code = main_internal(static_cast<int>(argc), reinterpret_cast<char**>(argv), is_win_service);
    if (is_win_service && exit_code != EXIT_SUCCESS) {
        ReportSvcStatus(SERVICE_STOPPED, static_cast<DWORD>(exit_code), 0);
    }
 }
 
 SERVICE_TABLE_ENTRY DispatchTable[] = {
-   { (LPSTR)SVCNAME, (LPSERVICE_MAIN_FUNCTION)service_main },
+   { (LPSTR)SVCNAME, ServiceMain },
    { NULL, NULL }
 };
 #endif

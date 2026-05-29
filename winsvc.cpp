@@ -3,7 +3,7 @@
 #include <iostream>
 #include <vector>
 
-char szPath[MAX_PATH];
+char szPath[MAX_PATH + 2];
 char SVCDESCRIPTION[] = "Local caching service";
 
 LPSTR GetLastErrorText(DWORD err, LPSTR lpszBuf, DWORD dwSize)
@@ -35,11 +35,16 @@ LPSTR GetLastErrorText(DWORD err, LPSTR lpszBuf, DWORD dwSize)
 DWORD install_win_service()
 {
 	DWORD err = 0;
-	if (!GetModuleFileName(NULL, szPath, MAX_PATH)) {
-		err = GetLastError();
+	DWORD len = GetModuleFileName(NULL, szPath + 1, MAX_PATH);
+	if (len == 0 || len == MAX_PATH) {
+		err = len == 0 ? GetLastError() : ERROR_INSUFFICIENT_BUFFER;
 		std::cerr << "Cannot install service, error:" << err << std::endl;
 		return err;
 	}
+
+	szPath[0] = '"';
+	szPath[len + 1] = '"';
+	szPath[len + 2] = '\0';
 
 	// Get a handle to the SCM database. 
 	SC_HANDLE schSCManager = OpenSCManager(

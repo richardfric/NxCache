@@ -1,7 +1,7 @@
 #pragma once
 #include <windows.h>
 
-extern char szPath[MAX_PATH];
+extern char szPath[];
 
 DWORD install_win_service();
 DWORD remove_win_service();

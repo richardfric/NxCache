@@ -1,0 +1,5 @@
+#!/bin/sh
+
+if [ -d /run/systemd/system ] && ( [ "$1" = remove ] || [ "$1" = purge ] ); then
+   systemctl --system daemon-reload >/dev/null || true
+fi

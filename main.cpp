@@ -103,7 +103,9 @@ BOOL WINAPI HandlerRoutine(_In_ DWORD dwCtrlType)
     }
 }
 
-#elif defined(__linux__) || defined(__APPLE__)
+#else
+
+static const char* pid_file_path = "/run/" SVCNAME ".pid";
 
 static void signal_handler(int signal)
 {
@@ -124,7 +126,7 @@ static int fork_to_background()
     }
 
     // Change the file mode mask and open any logs here
-    umask(0);
+    umask(022);
 
     // Create a new SID for the child process
     pid_t sid = setsid();
@@ -140,14 +142,27 @@ static int fork_to_background()
     // Redirect the standard file descriptors
     int dev_null = open("/dev/null", O_RDWR);
     if (dev_null != -1) {
-		dup2(dev_null, STDIN_FILENO);
-		dup2(dev_null, STDOUT_FILENO);
-		dup2(dev_null, STDERR_FILENO);
-		if (dev_null > STDERR_FILENO) {
-			close(dev_null);
-		}
+        dup2(dev_null, STDIN_FILENO);
+        dup2(dev_null, STDOUT_FILENO);
+        dup2(dev_null, STDERR_FILENO);
+        if (dev_null > STDERR_FILENO) {
+            close(dev_null);
+        }
     }
-    return 0;
+
+    std::ofstream pid_file(pid_file_path, std::ios::out | std::ios::trunc);
+    if (pid_file) {
+        pid_file << getpid() << std::endl;
+        pid_file.close();
+    }
+
+    if (!pid_file) {
+        std::error_code ec;
+        std::filesystem::remove(pid_file_path, ec);
+        return -1;
+    }
+
+	return 0;
 }
 #endif
 
@@ -262,24 +277,37 @@ static int main_internal(int argc, char** argv, bool detached = false)
 #if defined(_MSC_VER)
             ReportSvcStatus(SERVICE_RUNNING, NO_ERROR, 0);
 #endif
-            exitPromise.get_future().wait();
+        }
+        else {
+            std::cout << "Started " << SVCDISPLAYNAME << " at " << url << std::endl;
+        }
+
+#if !defined(_MSC_VER)
+        std::signal(SIGINT, signal_handler);
+        std::signal(SIGTERM, signal_handler);
+        std::signal(SIGHUP, signal_handler);
+        std::signal(SIGQUIT, signal_handler);
+#endif
+
+        int signal = exitPromise.get_future().get();
+
+        if (detached) {
 #if defined(_MSC_VER)
             ReportSvcStatus(SERVICE_STOPPED, NO_ERROR, 0);
 #endif
         }
         else {
-            std::cout << "Started " << SVCDISPLAYNAME << " at " << url << std::endl;
-#if defined(__linux__) || defined(__APPLE__)
-            std::signal(SIGINT, signal_handler);
-            std::signal(SIGTERM, signal_handler);
-            std::signal(SIGHUP, signal_handler);
-#endif
-
-            int signal = exitPromise.get_future().get();
             std::cout << "Exiting with signal " << signal << std::endl;
         }
 
         service.close();
+#if !defined(_MSC_VER)
+        if (detached) {
+            std::error_code ec;
+            std::filesystem::remove(pid_file_path, ec);
+        }
+#endif
+
         return EXIT_SUCCESS;
     }
     catch (const std::exception& e) {
@@ -288,6 +316,13 @@ static int main_internal(int argc, char** argv, bool detached = false)
     catch (...) {
         std::cerr << "Unknown exception caught" << std::endl;
     }
+
+#if !defined(_MSC_VER)
+    if (detached) {
+        std::error_code ec;
+        std::filesystem::remove(pid_file_path, ec);
+    }
+#endif
 
     return EXIT_FAILURE;
 }

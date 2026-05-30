@@ -1,0 +1,13 @@
+#!/bin/sh
+
+if [ -d /run/systemd/system ] && [ "$1" = "configure" ]; then
+   systemctl --system daemon-reload >/dev/null || true
+   if [ -z "$2" ]; then
+      systemctl enable NxCache || true
+   fi
+   if [ -n "$2" ]; then
+      systemctl try-restart NxCache || true
+   else
+      systemctl start NxCache || true
+   fi
+fi

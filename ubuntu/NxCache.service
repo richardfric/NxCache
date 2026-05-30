@@ -1,0 +1,13 @@
+[Unit]
+Description=NxCache Service
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=forking
+ExecStart=/usr/bin/NxCache -d
+PIDFile=/run/NxCache.pid
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

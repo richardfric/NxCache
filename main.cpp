@@ -1,24 +1,24 @@
 #include "NxCache.h"
-#include <future>
 #include <boost/program_options.hpp>
+#include <csignal>
+#include <future>
 
 #if defined(_MSC_VER)
 #include "winsvc.hpp"
-#include <signal.h>
 #include <strsafe.h>
 #include <shlobj.h>
 #else
-#include <boost/asio.hpp>
-#include <csignal>
+#include <fcntl.h>
+#include <unistd.h>
 #include <sys/stat.h>
 #endif
 
 namespace bpo = boost::program_options;
 
 static std::promise<int> exitPromise;
+static std::once_flag exitFlag;
 
 #if defined(_MSC_VER)
-static std::once_flag exitFlag;
 static SERVICE_STATUS svcStatus;
 static SERVICE_STATUS_HANDLE svcStatusHandle;
 
@@ -105,7 +105,12 @@ BOOL WINAPI HandlerRoutine(_In_ DWORD dwCtrlType)
 
 #elif defined(__linux__) || defined(__APPLE__)
 
-int start_as_daemon()
+static void signal_handler(int signal)
+{
+    std::call_once(exitFlag, [signal]() { exitPromise.set_value(signal); });
+}
+
+static int fork_to_background()
 {
     // Fork off the parent process
     pid_t pid = fork();
@@ -146,12 +151,12 @@ int start_as_daemon()
 }
 #endif
 
-int main_internal(int argc, char** argv, bool run_as_daemon = false)
+static int main_internal(int argc, char** argv, bool detached = false)
 {
     try {
         std::filesystem::path cache_dir;
 #if defined(_MSC_VER)
-        if (FAILED(SHGetFolderPath(NULL, run_as_daemon ? CSIDL_COMMON_APPDATA : CSIDL_LOCAL_APPDATA, NULL, SHGFP_TYPE_CURRENT, szPath))) {
+        if (FAILED(SHGetFolderPath(NULL, detached ? CSIDL_COMMON_APPDATA : CSIDL_LOCAL_APPDATA, NULL, SHGFP_TYPE_CURRENT, szPath))) {
             return EXIT_FAILURE;
         }
         cache_dir = szPath;
@@ -167,20 +172,21 @@ int main_internal(int argc, char** argv, bool run_as_daemon = false)
             ("port,p", bpo::value<uint16_t>()->default_value(8080u), "Port to listen on")
             ("token,t", bpo::value<std::string>()->default_value(TOKEN), "Authentication token");
 
-        if (!run_as_daemon) {
+        if (!detached) {
             app_options.add_options()
 #if defined(_MSC_VER)
                 ("register-service", "Register itself as Windows service")
                 ("unregister-service", "Unregister itself as Windows service")
 #else
-                ("daemon", "Run as daemon")
+                ("detach,d", "Run in background")
 #endif
                 ("help,h", "Print this help message and exit");
 
             try {
                 bpo::store(bpo::command_line_parser(argc, argv).options(app_options).run(), options);
+                bpo::notify(options);
             }
-            catch (const boost::program_options::error& e) {
+            catch (const bpo::error& e) {
                 std::cerr << "Error parsing command line: " << e.what() << std::endl;
                 return EXIT_FAILURE;
             }
@@ -199,11 +205,11 @@ int main_internal(int argc, char** argv, bool run_as_daemon = false)
                 return remove_win_service();
             }
 #else
-            run_as_daemon = options.count("daemon");
+            detached = options.count("detach");
 #endif
         }
 
-        if (run_as_daemon) {
+        if (detached) {
 #if defined(_MSC_VER)
             DWORD len = GetModuleFileName(NULL, szPath, MAX_PATH);
             if (len == 0 || len == MAX_PATH) {
@@ -212,9 +218,9 @@ int main_internal(int argc, char** argv, bool run_as_daemon = false)
             std::filesystem::path config_file = szPath;
             config_file = config_file.parent_path() / "config.ini";
 #else
-            int ret = start_as_daemon();
+            int ret = fork_to_background();
             if (ret < 0) {
-                std::cerr << "Error running as daemon." << std::endl;
+                std::cerr << "Failed to fork to background." << std::endl;
                 return EXIT_FAILURE;
             }
             else if (ret == 1) {
@@ -234,13 +240,10 @@ int main_internal(int argc, char** argv, bool run_as_daemon = false)
                     std::ifstream cfg_stream(config_file);
                     bpo::store(bpo::parse_config_file<char>(cfg_stream, app_options, true), options);
                 }
+                bpo::notify(options);
             }
-            catch (const std::exception& e) {
+            catch (const bpo::error& e) {
                 std::cerr << e.what() << std::endl;
-                return EXIT_FAILURE;
-            }
-            catch (...) {
-                std::cerr << "Unknown exception caught" << std::endl;
                 return EXIT_FAILURE;
             }
         }
@@ -251,11 +254,11 @@ int main_internal(int argc, char** argv, bool run_as_daemon = false)
 
         std::filesystem::create_directories(cache_dir);
 
-		std::string url = std::format("http://127.0.0.1:{}", options["port"].as<uint16_t>());
+        std::string url = std::format("http://127.0.0.1:{}", options["port"].as<uint16_t>());
         NxCacheService service(utility::conversions::to_string_t(url), options["token"].as<std::string>(), cache_dir);
         service.open();
 
-        if (run_as_daemon) {
+        if (detached) {
 #if defined(_MSC_VER)
             ReportSvcStatus(SERVICE_RUNNING, NO_ERROR, 0);
 #endif
@@ -265,18 +268,11 @@ int main_internal(int argc, char** argv, bool run_as_daemon = false)
 #endif
         }
         else {
+            std::cout << "Started " << SVCDISPLAYNAME << " at " << url << std::endl;
 #if defined(__linux__) || defined(__APPLE__)
-            boost::asio::thread_pool pool;
-            auto sig_set = std::make_shared<boost::asio::signal_set>(pool.get_executor());
-            sig_set->add(SIGINT);
-            sig_set->add(SIGTERM);
-            sig_set->add(SIGHUP);
-
-            auto handler = [sig_set](const boost::system::error_code& err, int signal) {
-                exitPromise.set_value(signal);
-                sig_set->cancel();
-                };
-            sig_set->async_wait(handler);
+            std::signal(SIGINT, signal_handler);
+            std::signal(SIGTERM, signal_handler);
+            std::signal(SIGHUP, signal_handler);
 #endif
 
             int signal = exitPromise.get_future().get();
@@ -285,9 +281,11 @@ int main_internal(int argc, char** argv, bool run_as_daemon = false)
 
         service.close();
         return EXIT_SUCCESS;
-    } catch( const std::exception& e ) {
+    }
+    catch (const std::exception& e) {
         std::cerr << e.what() << std::endl;
-    } catch( ... ) {
+    }
+    catch (...) {
         std::cerr << "Unknown exception caught" << std::endl;
     }
 

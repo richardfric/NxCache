@@ -16,9 +16,6 @@ target_compile_definitions(NxCache PRIVATE SVCNAME="NxCache" SVCDISPLAYNAME="NxC
 if(WIN32)
   target_sources(NxCache PRIVATE winsvc.cpp winsvc.hpp)
   target_compile_definitions(NxCache PRIVATE _WIN32_WINNT=0x0A00)
-else()
-  find_package(boost_asio_core CONFIG REQUIRED)
-  target_link_libraries(NxCache PRIVATE Boost::asio_core)
 endif()
 
 find_package(boost_program_options CONFIG REQUIRED)
@@ -32,6 +29,17 @@ else()
 endif()
 
 install(TARGETS NxCache RUNTIME DESTINATION bin)
+
+enable_testing()
+add_executable(test_cpprest test_cpprest.cpp)
+set_property(TARGET test_cpprest PROPERTY CXX_STANDARD 20)
+if(WIN32)
+    target_link_libraries(test_cpprest PRIVATE cpprestsdk::cpprest cpprestsdk::cpprestsdk_zlib_internal cpprestsdk::cpprestsdk_brotli_internal)
+else()
+    target_link_libraries(test_cpprest PRIVATE cpprestsdk::cpprest cpprestsdk::cpprestsdk_zlib_internal cpprestsdk::cpprestsdk_boost_internal cpprestsdk::cpprestsdk_openssl_internal)
+endif()
+
+add_test(NAME test_cpprest COMMAND test_cpprest)
 
 if(UNIX AND NOT APPLE)
     set(CPACK_GENERATOR "DEB")

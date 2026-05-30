@@ -1,9 +1,5 @@
 {
   "dependencies": [
-    {
-      "name": "boost-asio",
-      "platform": "!windows"
-    },
     "boost-program-options",
     "cpprestsdk"
   ]
